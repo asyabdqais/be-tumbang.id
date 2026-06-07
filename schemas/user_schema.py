@@ -15,9 +15,10 @@ class UserCreate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id:       int
-    username: str
-    role:     Role
+    id:        int
+    username:  str
+    role:      Role
+    is_active: bool = True
 
     model_config = {"from_attributes": True}
 

@@ -1,6 +1,5 @@
 from typing import Optional, List
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Response, Request
 from sqlalchemy.orm import Session
 
 from dependencies import get_db, get_current_user, create_access_token, create_refresh_token, verify_password, decode_token
@@ -34,9 +33,21 @@ def register(
     return create_user(db=db, user_data=user_data)
 
 
-@router.post("/login", response_model=Token)
-def login(form_data: UserAuth, db: Session = Depends(get_db)):
-    """Login menggunakan JSON body — pure JWT, bukan OAuth2 form."""
+def get_redirect_path(role: Role) -> str:
+    if role == Role.KADER:
+        return "kader"
+    elif role == Role.DOKTER:
+        return "dokter"
+    elif role == Role.ORANG_TUA:
+        return "orangtua"
+    elif role == Role.ADMIN:
+        return "admin"
+    return "unauthorized"
+
+
+@router.post("/login")
+def login(form_data: UserAuth, response: Response, db: Session = Depends(get_db)):
+    """Login menggunakan JSON body — menyisipkan token ke HttpOnly cookies."""
     user = get_user_by_username(db, username=form_data.username)
     if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(
@@ -46,18 +57,47 @@ def login(form_data: UserAuth, db: Session = Depends(get_db)):
         )
     access_token  = create_access_token(data={"sub": user.username})
     refresh_token = create_refresh_token(data={"sub": user.username})
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    
+    # Set cookies
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        secure=False,  # Ganti ke True jika HTTPS di production
+        max_age=15 * 60  # 15 menit
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=7 * 24 * 60 * 60  # 7 hari
+    )
+    
+    redirect_to = get_redirect_path(user.role)
+    return {"redirect_to": redirect_to}
 
 
-@router.post("/refresh", response_model=Token)
-def refresh_token(request: RefreshTokenRequest, db: Session = Depends(get_db)):
+@router.post("/refresh")
+def refresh_token(request: Request, response: Response, db: Session = Depends(get_db), refresh_request: RefreshTokenRequest = None):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token refresh tidak valid atau sudah kadaluarsa",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    # Coba ambil dari cookie, jika tidak ada fallback ke request body
+    token = request.cookies.get("refresh_token")
+    if not token and refresh_request:
+        token = refresh_request.refresh_token
+        
+    if not token:
+        raise credentials_exception
+        
     try:
-        payload  = decode_token(request.refresh_token)
+        payload  = decode_token(token)
         username = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -68,9 +108,36 @@ def refresh_token(request: RefreshTokenRequest, db: Session = Depends(get_db)):
     if user is None:
         raise credentials_exception
 
-    access_token      = create_access_token(data={"sub": user.username})
+    new_access_token  = create_access_token(data={"sub": user.username})
     new_refresh_token = create_refresh_token(data={"sub": user.username})
-    return {"access_token": access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
+    
+    # Update cookies
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=15 * 60
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=7 * 24 * 60 * 60
+    )
+    
+    return {"message": "Token refreshed successfully"}
+
+
+@router.post("/logout")
+def logout(response: Response):
+    """Logout dengan menghapus HttpOnly cookies."""
+    response.delete_cookie(key="access_token")
+    response.delete_cookie(key="refresh_token")
+    return {"message": "Logout sukses"}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -108,3 +175,27 @@ def list_users(
         raise HTTPException(status_code=403, detail="Hanya Admin yang dapat melihat daftar user")
 
     return get_users_by_role(db, role=role_enum)
+
+
+@router.put("/users/{user_id}/toggle-status")
+def toggle_user_status(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Admin mengaktifkan atau menonaktifkan akun user."""
+    if current_user.role != Role.ADMIN:
+        raise HTTPException(status_code=403, detail="Hanya Admin yang dapat mengubah status user")
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    
+    user.is_active = not user.is_active
+    db.commit()
+    db.refresh(user)
+    return {
+        "message": f"Status user {user.username} berhasil diubah",
+        "is_active": user.is_active
+    }
+

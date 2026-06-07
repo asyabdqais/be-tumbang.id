@@ -1,15 +1,47 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional
 from datetime import date
 
-from dependencies import get_db, require_roles
+from dependencies import get_db, get_current_user, require_roles
 from models.user_model import Role
 from models.balita_model import Balita
 from models.antropometri_model import Antropometri
 
 router = APIRouter()
+
+
+def _build_laporan_payload(balita_id: int, db: Session, current_user):
+    balita = db.query(Balita).filter(Balita.id == balita_id, Balita.is_deleted == 0).first()
+    if not balita:
+        raise HTTPException(status_code=404, detail="Balita tidak ditemukan")
+    if current_user.role == Role.ORANG_TUA and balita.orang_tua_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Anda tidak memiliki akses ke laporan balita ini")
+
+    balita_data = {
+        "nama": balita.nama,
+        "nik": balita.nik,
+        "tanggal_lahir": balita.tanggal_lahir.isoformat() if balita.tanggal_lahir else "",
+        "jenis_kelamin": balita.jenis_kelamin.value if balita.jenis_kelamin else ""
+    }
+
+    antropometris = db.query(Antropometri).filter(
+        Antropometri.balita_id == balita_id
+    ).order_by(Antropometri.tanggal_timbang.asc()).all()
+
+    antropometri_list = [
+        {
+            "tanggal_timbang": antro.tanggal_timbang.isoformat() if antro.tanggal_timbang else "",
+            "berat_badan": antro.berat_badan,
+            "tinggi_badan": antro.tinggi_badan,
+            "z_score": antro.z_score,
+            "status_gizi": antro.status_gizi
+        }
+        for antro in antropometris
+    ]
+
+    return balita, balita_data, antropometri_list
 
 
 @router.get("/ringkasan", dependencies=[Depends(require_roles(Role.ADMIN, Role.DOKTER, Role.KADER))])
@@ -140,3 +172,53 @@ def get_balita_berisiko(
             for row in hasil
         ]
     }
+
+
+@router.get("/balita/{balita_id}/unduh-laporan")
+def download_laporan_balita(
+    balita_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Mengunduh laporan PDF tumbuh kembang balita."""
+    from services.pdf_service import generate_rapor_pdf_bytes
+    from urllib.parse import quote
+
+    try:
+        balita, balita_data, antropometri_list = _build_laporan_payload(balita_id, db, current_user)
+        pdf_bytes = generate_rapor_pdf_bytes(balita_data, antropometri_list)
+        filename = f"Laporan_Tumbuh_Kembang_{balita.nama}.pdf"
+        safe_filename = quote(filename)
+        ascii_filename = filename.encode("ascii", "ignore").decode("ascii") or "laporan.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{safe_filename}",
+                "Content-Length": str(len(pdf_bytes)),
+            },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal generate PDF: {str(e)}")
+
+
+@router.get("/balita/{balita_id}/data-laporan")
+def get_laporan_balita_base64(
+    balita_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Mengambil PDF sebagai JSON base64 agar tidak diintercept download manager."""
+    from services.pdf_service import generate_rapor_pdf_bytes
+    import base64
+
+    try:
+        balita, balita_data, antropometri_list = _build_laporan_payload(balita_id, db, current_user)
+        pdf_bytes = generate_rapor_pdf_bytes(balita_data, antropometri_list)
+        return {
+            "filename": f"Laporan_Tumbuh_Kembang_{balita.nama}.pdf",
+            "mime_type": "application/pdf",
+            "content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal generate PDF: {str(e)}")

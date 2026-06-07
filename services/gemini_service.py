@@ -25,42 +25,78 @@ async def generate_intervensi_resep(
     asi_info       = f"ASI Eksklusif: {'Ya' if asi_eksklusif else 'Tidak'}" if asi_eksklusif is not None else "ASI Eksklusif: tidak tercatat"
 
     prompt = f"""
-Anda adalah seorang Dokter Spesialis Anak dan Ahli Gizi Klinis yang bekerja untuk program Posyandu Puskesmas Indonesia.
-Berikan rekomendasi intervensi gizi yang **spesifik, praktis, dan berbasis bukti ilmiah** untuk balita berikut ini.
+Anda adalah Dokter Spesialis Anak di Posyandu. Buatkan rekomendasi gizi RINGKAS untuk balita ini.
 
---- DATA BALITA ---
-Nama          : {nama_balita}
-Usia          : {umur_bulan} bulan
-Jenis Kelamin : {jenis_kelamin}
-Berat Badan   : {berat_badan} kg
-Tinggi Badan  : {tinggi_badan} cm
-{lila_info}
-{lk_info}
-{imunisasi_info}
-{asi_info}
-Kondisi Geografis     : {kondisi_geografis}
-Status Gizi (Z-Score) : **{status_gizi}**
+DATA: {nama_balita}, {umur_bulan} bln, {jenis_kelamin}, BB {berat_badan}kg, TB {tinggi_badan}cm, {lila_info}, {lk_info}, {imunisasi_info}, {asi_info}, Geo: {kondisi_geografis}, Status: {status_gizi}
 
---- INSTRUKSI ---
-Buatkan laporan intervensi dengan format berikut (gunakan Bahasa Indonesia yang mudah dipahami orang tua):
+ATURAN OUTPUT — WAJIB ikuti dengan ketat:
+1. Output HARUS berupa HTML murni (BUKAN markdown). Jangan gunakan ** atau # atau ```.
+2. Gunakan TEPAT 5 section dengan format HTML di bawah.
+3. Setiap section HARUS singkat: maksimal 2-3 kalimat untuk deskripsi, gunakan <ul><li> untuk poin-poin.
+4. Menu makanan: berikan HANYA 3 contoh menu (pagi/siang/malam) untuk 1 hari, bukan 7 hari. Gunakan bahan lokal sesuai "{kondisi_geografis}".
+5. JANGAN tulis pembukaan, salam, atau penutup. Langsung mulai dari <div>.
+6. Total output MAKSIMAL 350 kata.
 
-**1. Analisis Kondisi**
-Jelaskan kondisi gizi anak secara singkat dan apa risikonya.
+FORMAT HTML YANG HARUS DIIKUTI (copy persis struktur ini):
 
-**2. Rekomendasi Pola Makan (7 Hari)**
-Berikan contoh menu harian yang realistis. **WAJIB mempertimbangkan kondisi geografis "{kondisi_geografis}"** — prioritaskan bahan pangan lokal yang mudah didapat di daerah tersebut.
+<div class="gizi-section">
+<div class="gizi-section-icon">📋</div>
+<div class="gizi-section-body">
+<h4>Analisis Kondisi</h4>
+<p>[2-3 kalimat singkat tentang kondisi dan risiko anak]</p>
+</div>
+</div>
 
-**3. Suplemen & Intervensi Medis**
-Rekomendasikan suplemen yang diperlukan (contoh: PMT, Vitamin A, Zinc, Fe) sesuai pedoman Kemenkes RI.
+<div class="gizi-section">
+<div class="gizi-section-icon">🍽️</div>
+<div class="gizi-section-body">
+<h4>Contoh Menu Harian</h4>
+<ul>
+<li><strong>Pagi:</strong> [menu]</li>
+<li><strong>Siang:</strong> [menu]</li>
+<li><strong>Malam:</strong> [menu]</li>
+</ul>
+<p class="gizi-note">[1 kalimat tips selingan]</p>
+</div>
+</div>
 
-**4. Saran untuk Orang Tua**
-Berikan 3-5 tips praktis yang bisa langsung dilakukan di rumah.
+<div class="gizi-section">
+<div class="gizi-section-icon">💊</div>
+<div class="gizi-section-body">
+<h4>Suplemen yang Dianjurkan</h4>
+<ul>
+<li>[suplemen 1]</li>
+<li>[suplemen 2]</li>
+<li>[suplemen 3 jika perlu]</li>
+</ul>
+</div>
+</div>
 
-**5. Tanda Bahaya (Red Flags)**
-Sebutkan kondisi yang harus segera dibawa ke Puskesmas atau Rumah Sakit.
+<div class="gizi-section">
+<div class="gizi-section-icon">💡</div>
+<div class="gizi-section-body">
+<h4>Tips untuk Orang Tua</h4>
+<ul>
+<li>[tip 1 — 1 kalimat]</li>
+<li>[tip 2 — 1 kalimat]</li>
+<li>[tip 3 — 1 kalimat]</li>
+</ul>
+</div>
+</div>
 
-**PENTING: Gaya Bahasa**
-Gunakan gaya bahasa yang hangat, natural, dan empati layaknya manusia asli (seorang dokter sungguhan yang peduli pada pasiennya). JANGAN gunakan pembukaan khas AI, gaya bahasa kaku, atau kalimat klise robotik. Hindari penggunaan markdown berlebihan jika tidak perlu, buat senatural mungkin.
+<div class="gizi-section gizi-section-danger">
+<div class="gizi-section-icon">🚨</div>
+<div class="gizi-section-body">
+<h4>Tanda Bahaya</h4>
+<ul>
+<li>[tanda 1]</li>
+<li>[tanda 2]</li>
+<li>[tanda 3]</li>
+</ul>
+</div>
+</div>
+
+Bahasa: Indonesia, hangat tapi ringkas. JANGAN bertele-tele.
 """
     try:
         response = await model.generate_content_async(prompt)

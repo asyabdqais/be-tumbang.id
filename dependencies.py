@@ -2,7 +2,7 @@ import jwt
 import datetime
 from pwdlib import PasswordHash
 from pwdlib.hashers.bcrypt import BcryptHasher
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from database import SessionLocal, SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
@@ -41,9 +41,10 @@ def get_db():
         db.close()
 
 # ─── JWT Bearer (pure, bukan OAuth2) ─────────────────────
-bearer_scheme = HTTPBearer()
+bearer_scheme = HTTPBearer(auto_error=False)
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db)
 ):
@@ -52,8 +53,17 @@ def get_current_user(
         detail="Token tidak valid atau sudah kadaluarsa",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    # Ambil token dari cookie, jika tidak ada, coba dari header
+    token = request.cookies.get("access_token")
+    if not token and credentials:
+        token = credentials.credentials
+        
+    if not token:
+        raise credentials_exception
+        
     try:
-        payload = decode_token(credentials.credentials)
+        payload = decode_token(token)
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -62,7 +72,7 @@ def get_current_user(
 
     from models.user_model import User
     user = db.query(User).filter(User.username == username).first()
-    if user is None:
+    if user is None or not getattr(user, 'is_active', True):
         raise credentials_exception
     return user
 

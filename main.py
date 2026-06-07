@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 from database import engine, Base
 
@@ -41,13 +42,28 @@ async def custom_swagger_ui_html():
     body = body.replace("</head>", f"{custom_css}</head>")
     return HTMLResponse(body)
 
-# CORS
+# CORS — hanya origin frontend proyek (dev: 5173, production docker: 3000)
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+cors_origins_env = os.getenv("CORS_ORIGINS")
+allow_origins = (
+    [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+    if cors_origins_env
+    else DEFAULT_CORS_ORIGINS
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # Ganti ke domain spesifik saat production
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 # Routers (tanpa versioning)
